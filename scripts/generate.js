@@ -35,8 +35,6 @@ const exec = require('child_process').execSync;
  const GenerateFeedsConfig = (name, uri, branch) => {
   exec(`git clone --depth=1 ${uri} -b ${branch} ${name}`);
   const revision = exec(`cd ${name} && git log -1 --pretty=%H`).toString().trim();
-  exec(`cd ..`);
-  exec(`rm -rf ${name}`);
   return {
     name: name.trim(),
     uri: uri.trim(),
@@ -73,9 +71,13 @@ const GenerateYml = (workflows) => {
     workflows.forEach(workflow => {
       // 读取官方配置文件
       let profilesYml = yaml.load(fs.readFileSync(`${glInfraBuilder}/profiles/${workflow.target}.yml`, 'utf8'));
+      // 读取config配置文件
+      const configYml = yaml.load(fs.readFileSync(`${glInfraBuilder}/configs/${workflow.config}.yml`, 'utf8'));
+      const openwrt_root_dir = configYml.openwrt_root_dir;
+
       // 获取 include 列表
       const include = profilesYml.include;
-      if(include.length > 0) {
+      if(include && include.length > 0) {
         profilesYml.include = [];
         include.forEach(include => {
           // 读取 include 配置文件
@@ -83,7 +85,6 @@ const GenerateYml = (workflows) => {
           // 合并 include 配置文件
           profilesYml = deepmerge(profilesYml, includeYml);
         });
-
       }
       // 合并 feeds 配置
       profilesYml = deepmerge(profilesYml, { feeds });
@@ -94,7 +95,7 @@ const GenerateYml = (workflows) => {
       const yamlStr = yaml.dump(profilesYml, { lineWidth: -1, sortKeys });
       // 配置文件路径
       const build = (workflow.build || `glinet-${workflow.model}`);
-      const profilesPath = path.resolve(process.cwd(), `${build.replace(/\./g, '-')}.yml`);
+      const profilesPath = path.resolve(process.cwd(), `${build}.yml`);
       // 写入配置文件
       fs.writeFileSync(profilesPath, `---\n${yamlStr}`);
 
@@ -104,19 +105,23 @@ const GenerateYml = (workflows) => {
       let template = fs.readFileSync(path.resolve(__dirname, 'workflow.tpl'), 'utf8');
       // 替换模板中的变量
       template = template.replace(/\$\{name\}/g, workflowName.toUpperCase().replace(/-/g, ' '));
-      template = template.replace(/\$\{pathFile\}/g, `${build.replace(/\./g, '-')}.yml`);
+      template = template.replace(/\$\{workflowName\}/g, workflowName);
+      template = template.replace(/\$\{build\}/g, build);
       template = template.replace(/\$\{model\}/g, workflow.model);
       template = template.replace(/\$\{config\}/g, workflow.config);
+      template = template.replace(/\$\{official\}/g, workflow.official);
       template = template.replace(/\$\{modelUpper\}/g, workflow.model.toUpperCase());
-      template = template.replace(/\$\{build\}/g, build.replace(/\./g, '-'));
-      template = template.replace(/\$\{releaseTitle\}/g, `## 📦‍ 固件下载 | ${build.toUpperCase().replace(/-/g, ' ')}`);
+      template = template.replace(/\$\{releaseTitle\}/g, `## 📦‍ 固件下载 | ${workflowName.replace('build-', '').toUpperCase().replace(/-/g, ' ')}`);
       template = template.replace(/\$\{releasePackages\}/g, JSON.stringify([
         `## ✨ 主要功能`,
         ...packagesDesc
       ].join('\n')));
+      template = template.replace(/\$\{openwrt_root_dir\}/g, openwrt_root_dir);
+      template = template.replace(/\$\{target\}/g, profilesYml.target);
+      template = template.replace(/\$\{subtarget\}/g, profilesYml.subtarget);
       template = template.replace(/\$\{length\}/g, workflows.length);
       // 写入workflow
-      const workflowsPath = path.resolve(process.cwd(), '.github/workflows', `${workflowName.replace(/\./g, '-')}.yml`);
+      const workflowsPath = path.resolve(process.cwd(), '.github/workflows', `${workflowName}.yml`);
       fs.writeFileSync(workflowsPath, template)
     })
   } catch (error) {
@@ -124,6 +129,7 @@ const GenerateYml = (workflows) => {
   } finally {
      // 清理文件
      exec(`rm -rf gl-infra-builder`);
+     require('./feeds').forEach(item => exec(`rm -rf ${item.name}`));
      exec(`rm -rf node_modules`);
      exec(`rm -rf package-lock.json`);
      exec(`rm -rf package.json`);
