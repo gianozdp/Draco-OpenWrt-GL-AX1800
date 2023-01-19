@@ -1,7 +1,7 @@
 
 /**
  * 字段说明
- * @name app 名称
+ * @name app 名称2
  * @desc app 描述
  */
 module.exports = [
